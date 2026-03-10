@@ -1,0 +1,2255 @@
+# %% [markdown]
+# <a href="https://colab.research.google.com/github/Yul-79/Challenge-Telecom-X/blob/main/TelecomX_LATAM.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# %% [markdown]
+# # 📚 Bibliotecas y librerias
+
+# %%
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import requests
+import json
+import datetime
+import chardet
+from scipy.stats import pointbiserialr
+
+# %%
+from google.colab import drive
+drive.mount('/content/drive',force_remount=True)
+
+carpeta_graficos = '/content/drive/MyDrive/CURSOS/ALURA/Challenge Telecom X/Gráficos'
+
+# %% [markdown]
+# #📌 Extracción
+
+# %%
+enlaceApi = 'https://github.com/alura-cursos/challenge2-data-science-LATAM/blob/main/TelecomX_Data.json' # -> Enlace web, razón por lo que no es posible leer directamente
+enlace_raw_data = 'https://raw.githubusercontent.com/alura-cursos/challenge2-data-science-LATAM/main/TelecomX_Data.json' # -> Servidor de contenido crudo de GitHub (JSON puro) y permite acceder y leer el archivo
+
+# %%
+# Requests para obtener la respuesta de la URL
+acceso = requests.get(enlace_raw_data)
+json_nativo = json.loads(acceso.text)
+df = pd.DataFrame(json_nativo) # Pasamos a df como un auxiliar para explorar
+df.head(2) #
+
+
+# %% [markdown]
+# #🔧 Transformación
+
+# %%
+df = pd.json_normalize(json_nativo) # Normalizamos la dataset
+df.head()
+
+# %%
+# Prefijos a eliminar
+prefijos = ['customer.', 'phone.', 'internet.', 'account.', 'Charges.']
+
+# Listas para el mapeo (emparejamiento)
+nombres_actuales = []
+nombres_limpios = []
+
+# Iterar sobre las columnas del DataFrame
+for col in df.columns:
+    es_prefijo = False
+
+    # Verificar si la columna comienza con alguno de los prefijos
+    for prefijo in prefijos:
+        if col.startswith(prefijo):
+            nombres_actuales.append(col)
+            # Eliminar el prefijo para obtener el nombre limpio
+            nombres_limpios.append(col.replace(prefijo, '', 1))
+            es_prefijo = True
+            break
+
+    # Si la columna no tiene prefijo (ej: customerID, Churn), se mantiene igual
+    if not es_prefijo:
+        nombres_actuales.append(col)
+        nombres_limpios.append(col)
+
+
+# Usar zip() para crear el diccionario de mapeo
+# Empareja (zip) los nombres actuales con los nombres limpios
+mapeo_renombre = dict(zip(nombres_actuales, nombres_limpios))
+
+# Renombrado con .rename()
+# Le pasamos el diccionario de mapeo generado por zip
+df = df.rename(columns=mapeo_renombre)
+df.info()
+
+# %%
+df.columns.tolist() # Visualizamos los nombres de los encabezados en lista
+
+# %%
+# Direccionario de nombre de columnas en español para su modificación
+columnas_es = [
+    'ID_Cliente',
+    'Desercion',
+    'Genero',
+    'Adulto_Mayor',
+    'Pareja',
+    'Dependientes',
+    'Antiguedad_Meses',
+    'Servicio_Telefono',
+    'Lineas_Multiples',
+    'Servicio_Internet',
+    'Seguridad_Online',
+    'Respaldo_Online',
+    'Proteccion_Dispositivo',
+    'Soporte_Tecnico',
+    'TV_Streaming',
+    'Peliculas_Streaming',
+    'Tipo_Contrato',
+    'Facturacion_Sin_Papel',
+    'Metodo_Pago',
+    'Cargo_Mensual',
+    'Cargo_Total'
+]
+
+# %%
+## Modificación de columnas
+mapping = dict(zip(df.columns, columnas_es))
+df = df.rename(columns=mapping)
+df.head()
+
+# %%
+# Identificamos si hay valores vacios
+columnas_con_vacios = [
+    col for col in df.columns
+    if df[col].astype(str).str.strip().eq('').any()
+]
+print("Columnas con vacíos:", columnas_con_vacios)
+
+# %%
+# Reemplazar '', ' ', '   ' → np.nan en TODAS las columnas string
+df = df.replace(r'^\s*$', np.nan, regex=True)
+
+# %%
+df['Cargo_Total'] = pd.to_numeric(df['Cargo_Total'], errors='coerce')
+df.info()
+
+# %%
+# Detectar columnas con valores NaN después del reemplazo
+columnas_nulas = df.columns[df.isnull().any()].tolist()
+print("Columnas con nulls:", columnas_nulas)
+
+# %%
+for col in columnas_nulas:
+    nulos = df[col].isnull().sum()
+    porcentaje = df[col].isnull().mean() * 100
+
+    print(f"Columna: {col}")
+    print(f" - Cantidad de nulos: {nulos:,}")
+    print(f" - Porcentaje: {porcentaje:.4f}%\n")
+
+
+# %%
+df_validacion = df.isnull().melt()
+sns.displot(data=df_validacion, y='variable', hue='value', multiple='fill', aspect=2)
+plt.show() ## Gráfico que nos permite visualizar datos faltantes
+
+# %%
+# Eliminar registros vacios o nulls
+df = df.dropna(subset=['Cargo_Total', 'Desercion'])
+df.info()
+
+# %%
+df.nunique()
+
+# %%
+columnas_object = df.select_dtypes(include='object').columns.tolist()
+print(columnas_object)
+
+# %%
+columnas_object = df.select_dtypes(include='object').columns
+
+for col in columnas_object:
+    print(f"\n Columna: {col}")
+    print(df[col].value_counts())
+
+
+# %%
+cols_texto = ['Metodo_Pago', 'Genero', 'Tipo_Contrato',
+              'Pareja', 'Desercion', 'Dependientes',
+              'Servicio_Telefono', 'Facturacion_Sin_Papel']
+
+df[cols_texto] = df[cols_texto].apply(
+    lambda col: col.astype(str).str.strip()
+)
+
+map_traducciones = {
+    'Metodo_Pago': {
+        'Electronic check': 'Cheque Electrónico',
+        'Mailed check': 'Cheque por Correo',
+        'Bank transfer (automatic)': 'Transferencia Bancaria',
+        'Credit card (automatic)': 'Tarjeta de Crédito'
+    },
+    'Genero': {
+        'Male': 'Masculino',
+        'Female': 'Femenino'
+    },
+    'Tipo_Contrato': {
+        'Month-to-month': 'Mensual',
+        'Two year': '2 Años',
+        'One year': '1 Año'
+    }
+}
+
+for col, mapa in map_traducciones.items():
+    df[col] = df[col].replace(mapa)
+
+df.head()
+
+# %%
+map_binario = {'No': 0, 'Si': 1, 'Yes': 1}
+
+cols_binarias = [
+    'Pareja', 'Desercion', 'Dependientes',
+    'Servicio_Telefono', 'Facturacion_Sin_Papel'
+]
+
+df[cols_binarias] = (
+    df[cols_binarias]
+        .replace(map_binario)
+        .infer_objects(copy=False)
+        .astype('Int64')
+)
+
+df.head(2)
+
+# %% [markdown]
+# #📊 Carga y análisis
+
+# %% [markdown]
+# ## Análisis General
+
+# %% [markdown]
+# ### Distribución por Genero
+
+# %%
+# Distribución del género
+frecuencia_genero = df['Genero'].value_counts()
+porcentaje = df['Genero'].value_counts(normalize=True) * 100
+
+resumen = pd.DataFrame({
+    'Total': frecuencia_genero,
+    'Porcentaje': porcentaje
+})
+
+resumen['Total'] = resumen['Total'].apply(lambda x: f'{x:,.0f}')
+resumen['Porcentaje'] = resumen['Porcentaje'].apply(lambda x: f'{x:,.2f} %')
+
+resumen
+
+# %%
+# Dataframe
+frecuencia_genero = df['Genero'].value_counts()
+porcentaje = df['Genero'].value_counts(normalize=True) * 100
+
+colores = ['#0A4FA3', '#d81b60']  # Colores asignados para cada barra
+
+fig, ax = plt.subplots(figsize=(5,3))  # Creamos la figura y los ejes con tamaño definido
+
+ax.set_frame_on(False)  # Ocultamos el marco del gráfico
+ax.tick_params(axis='x', which = 'both', size = 0) # Quitamos los ticks del eje X
+
+ax.bar(frecuencia_genero.index, frecuencia_genero.values, color=colores)  # Dibujamos las barras
+
+ax.set_title('Distribución de Genero', pad=20)  # Título con separación ajustada
+ax.set_yticks([])  # Quitamos las marcas y etiquetas del eje Y
+
+
+# Añadimos etiquetas numéricas encima de cada barra
+for i, (total, pct) in enumerate(zip(frecuencia_genero.values, porcentaje.values)):
+    ax.text(i, total + 30,
+            f'{total:,.0f}\n({pct:.2f}%)',          # Ubicación y formato del valor
+            color='black', fontsize=8.5,
+            ha='center', va='bottom')
+
+plt.show()
+
+# %% [markdown]
+# ### Proporción de clientes según perfil etario
+
+# %%
+# Distribución de perfil
+distribucion_demografico = df['Adulto_Mayor'].value_counts()
+porcentajes = df['Adulto_Mayor'].value_counts(normalize=True) * 100
+
+# Construir DataFrame base
+resumen = pd.DataFrame({
+    'Total': distribucion_demografico,
+    'Porcentaje': porcentajes.round(2)
+})
+
+# Formatear columnas de salida
+resumen['Porcentaje'] = resumen['Porcentaje'].apply(lambda x: f"{x:,.2f} %")
+resumen['Total'] = resumen['Total'].apply(lambda x: f"{x:,.0f}")
+resumen.index.name = 'Adulto Mayor'
+
+resumen
+
+# %%
+# Distribución de perfil
+distribucion_demografico = df['Adulto_Mayor'].value_counts()
+
+# Crear etiquetas legibles
+etiquetas = ['No Adulto Mayor' if x == 0 else 'Adulto Mayor' for x in distribucion_demografico.index]
+
+colores = ['steelblue', 'lightcoral']
+
+plt.figure(figsize=(4,4))
+plt.pie(
+    distribucion_demografico,
+    autopct='%1.1f%%',
+    labels=etiquetas,
+    colors=colores,
+    startangle=90
+)
+
+plt.title('Proporción de clientes según perfil etario')
+
+#plt.legend(etiquetas, title="Categoría", )
+plt.show()
+
+
+# %% [markdown]
+# #### Conclusiones:
+# - Los adultos mayores solo representa un total de 16%.
+
+# %% [markdown]
+# ### Distribución de clientes según convivencia (vive solo vs. en pareja)
+
+# %%
+# Distribución de Socio (Partner)
+distribucion_socio = df['Pareja'].value_counts()
+porcentajes = df['Pareja'].value_counts(normalize=True) * 100
+
+# Construir DataFrame base
+resumen = pd.DataFrame({
+    'Total': distribucion_socio,
+    'Porcentaje': porcentajes.round(2)
+})
+
+# Formatear columnas de salida
+resumen['Porcentaje'] = resumen['Porcentaje'].apply(lambda x: f"{x:,.2f} %")
+resumen['Total'] = resumen['Total'].apply(lambda x: f"{x:,.0f}")
+resumen.index.name = 'Pareja'
+
+resumen
+
+# %%
+# Conteo
+socio = df['Pareja'].value_counts()
+
+# Reemplazar etiquetas del índice
+socio.index = socio.index.map({0: 'No', 1: 'Sí'})
+
+# Porcentajes alineados con socio
+porcentaje = (socio / socio.sum()) * 100
+
+# Colores
+colores = ['#e6daa6', '#0A4FA3']
+
+# Gráfico
+fig, ax = plt.subplots(figsize=(5,3))
+ax.set_frame_on(False)
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje x
+
+ax.bar(socio.index, socio.values, color=colores)
+ax.set_title('Proporción de clientes sin pareja vs. clientes con pareja', pad=25)
+ax.set_yticks([])
+
+# Etiquetas
+for i, (total, pct) in enumerate(zip(socio.values, porcentaje.values)):
+    ax.text(
+        i, total + 30,
+        f'{total:,.0f}\n({pct:.1f}%)',
+        ha='center',
+        va='bottom',
+        fontsize=9
+    )
+
+plt.show()
+
+# %% [markdown]
+# #### Conclusiones:
+# - Clientes individuales representa casi el 52% de total de datos y solo el 48% clientes con pareja o asociado
+
+# %% [markdown]
+# <!-- ### Distribución de Antiguedad -->
+
+# %% [markdown]
+# ### Distribución por Antiguedad
+
+# %%
+# Crea la Figura y los Ejes. Inicializa un lienzo (fig) y una matriz de Ejes (axs) con 1 fila y 2 columnas. El tamaño de la figura es de 12 con 4 pulgadas.
+fig, axs = plt.subplots(1, 2, figsize=(10, 3))
+
+axs[0].hist(df['Antiguedad_Meses'], bins=30, edgecolor="black")
+axs[0].set_title('Distribución de Antiguedad en Meses')
+axs[0].set_xlabel('Meses')
+axs[0].set_ylabel('Cantidad')
+
+axs[1].boxplot(df['Antiguedad_Meses'])
+axs[1].set_title('Boxplot de la Distribución de Antiguedad en Meses')
+axs[1].set_xlabel('Meses')
+axs[1].set_ylabel('Cantidad')
+axs[1].grid(True, linestyle='--', alpha=0.5)
+
+plt.show()
+
+# %% [markdown]
+# #### Conclusiones:
+# - El histograma nos indica que la antigüedad tiene una distribución bimodal con una forma de U, lo que significa que no es simétrica. La mayoría de las personas se concentran en los extremos: nuevos (Antigüedad ~0) y antiguos (Antigüedad ~70), mientras que el grupo intermedio es el menos numeroso.
+# 
+# - El rango intercuartílico (la caja) es muy amplio, cubriendo una gran parte del rango total de antigüedad (casi todo el rango central de 10 a 55). Esto indica una alta dispersión de los datos.
+
+# %% [markdown]
+# ### Distribución por Recarga Mensual
+
+# %%
+# Crea la Figura y los Ejes. Inicializa un lienzo (fig) y una matriz de Ejes (axs) con 1 fila y 2 columnas. El tamaño de la figura es de 12 con 4 pulgadas.
+fig, axs = plt.subplots(1, 2, figsize=(10, 3))
+
+axs[0].hist(df['Cargo_Mensual'], bins=30, edgecolor="black")
+axs[0].set_title('Distribución de Cargos Mensuales')
+axs[0].set_xlabel('Cargos Mensuales')
+axs[0].set_ylabel('Cantidad')
+
+axs[1].boxplot(df['Cargo_Mensual'])
+axs[1].set_title('Boxplot de la distribución de Cargos Mensuales')
+axs[1].set_xlabel('Cargos Mensuales')
+axs[1].set_ylabel('Cantidad')
+axs[1].grid(True, linestyle='--', alpha=0.5)
+
+plt.show()
+
+# %% [markdown]
+# #### Conclusiones:
+# - La empresa tiene una gran base de clientes que solo consumen el servicio básico (recargas bajas), pero también mantiene una cantidad significativa de clientes con una amplia gama de consumos medios y altos.
+# 
+# - La mediana (70) está mucho más cerca del tercer cuartil (90), lo cual es una señal clara de la asimetría negativa que ya vimos en el histograma.
+
+# %% [markdown]
+# ### Distribución de Recargas Totales
+
+# %%
+# Crea la Figura y los Ejes. Inicializa un lienzo (fig) y una matriz de Ejes (axs) con 1 fila y 2 columnas. El tamaño de la figura es de 12 con 4 pulgadas.
+fig, axs = plt.subplots(1, 2, figsize=(10, 3))
+
+axs[0].hist(df['Cargo_Total'], bins=30, edgecolor="black")
+axs[0].set_title('Distribución de Cargos totales')
+axs[0].set_xlabel('Cargos totales')
+axs[0].set_ylabel('Cantidad')
+
+axs[1].boxplot(df['Cargo_Total'])
+axs[1].set_title('Boxplot de la distribución de Cargos totales')
+axs[1].set_xlabel('Cargos totales')
+axs[1].set_ylabel('Cantidad')
+axs[1].grid(True, linestyle='--', alpha=0.5)
+
+plt.show()
+
+# %% [markdown]
+# ## Análisis de Abandono (Churn) Profundizado
+
+# %% [markdown]
+# ### ¿Cómo se distribuye la base de clientes entre desertores y no desertores?
+
+# %%
+total = df['Desercion'].value_counts()
+total_porcentaje = df['Desercion'].value_counts(normalize=True)*100
+
+resultados = pd.DataFrame({
+    'Total': total,
+    'Porcentaje': total_porcentaje
+})
+
+resultados['Total'] = resultados['Total'].apply(lambda x: f'{x:,.0f}')
+resultados['Porcentaje'] = resultados['Porcentaje'].apply(lambda x: f'{x:.1f}%')
+
+resultados.index.name = 'Desercion'
+
+resultados
+
+# %%
+# Dataframe a gráficar
+df_churn = (
+    df['Desercion']
+    .value_counts()
+    .rename_axis('Desercion')
+    .reset_index(name='Total')
+)
+
+df_churn['Desercion'] = df_churn['Desercion'].astype('object')
+
+df_churn['Porcentaje'] = df_churn['Total'] / df_churn['Total'].sum() * 100
+df_churn['Desercion'] = df_churn['Desercion'].replace({0: 'No', 1: 'Si'})
+df_churn = df_churn.sort_values('Total', ascending=True)
+
+# Colores, resaltamos el Si
+colores = []
+for desercion in df_churn['Desercion']:
+  if desercion == 'Si':
+    colores.append('red')
+  else:
+    colores.append('silver')
+
+#Gráfico
+fig, ax = plt.subplots(figsize=(4,2)) # Definimos el tamaño del lienzo
+
+ax.set_frame_on(False)    # Oculta el marco del gráfico
+ax.xaxis.set_visible(False)                    # Oculta el eje X completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+
+ax.barh(df_churn['Desercion'],df_churn['Total'], color=colores)
+ax.set_title('Deserción de clientes', fontsize=12, weight='bold', pad=20, loc='left')
+ax.text(
+    0.0, 1.02,
+    'Proporción de clientes no desertores vs desertores',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+
+# Etiquetas en cada barra
+for i, (total, pct) in enumerate(zip(df_churn['Total'], df_churn['Porcentaje'])):
+    ax.text(
+        total - 300,        # X → al final de la barra
+        i,                 # Y → posición de la barra
+        f'{total:,.0f} ({pct:.1f}%)',
+        va='center',
+        ha='right',
+        fontsize=8,
+        color='black'
+    )
+
+# Guardar Gráfico como PNG
+fig.savefig(carpeta_graficos+'/Distribución_desercion.png', transparent=False, dpi=300, bbox_inches='tight')
+
+plt.show()
+
+
+# %% [markdown]
+# ### ¿Los clientes que desertan tienen menor antigüedad que el promedio general?
+
+# %%
+desertores = df.loc[df['Desercion'] == 1, 'Antiguedad_Meses'].describe()
+general = df['Antiguedad_Meses'].describe()
+
+resumen = pd.concat(
+    [desertores, general],
+    axis=1,
+    keys=['Desertores', 'General']
+).reset_index().rename(columns={'index': 'Descripción'})
+
+
+resumen
+
+# %% [markdown]
+# #### Observaciones Desertores:
+# - El 50% de los clientes que abandonan lo hace antes de cumplir 10 meses, mientras que el cliente típico de la base general permanece casi 2 años y medio.
+
+# %%
+plt.figure(figsize=(4,3))
+
+df['Desercion_label'] = df['Desercion'].map({0: 'No desertó', 1: 'Desertó'})
+
+sns.boxplot(
+    data=df,
+    x='Desercion_label',
+    y='Antiguedad_Meses',
+    hue='Desercion_label',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    showfliers=False,
+    legend=False
+)
+
+plt.xticks([0,1], ['No desertó', 'Desertó'])
+
+plt.title(
+    'Los clientes que desertan abandonan en etapas tempranas',
+    fontsize=10,
+    weight='bold',
+    loc='left',
+    pad=20
+)
+
+plt.text(
+    0, df['Antiguedad_Meses'].max() * 1.02,
+    'Mediana: 29 meses',
+    ha='center',
+    fontsize=9,
+    color='gray'
+)
+
+plt.text(
+    1, df['Antiguedad_Meses'].max() * 1.02,
+    'Mediana: 10 meses',
+    ha='center',
+    fontsize=9,
+    color='red'
+)
+
+plt.ylabel('Antigüedad del cliente (meses)', color='gray')
+plt.yticks(color='gray')
+plt.tick_params(axis='y', color='lightgray')
+plt.tick_params(axis='x', color='lightgray', size=0)
+plt.xlabel('')
+
+plt.grid(axis='y', linestyle='--', alpha=0.2)
+sns.despine(left=True, bottom=True)
+
+plt.show()
+
+
+# %% [markdown]
+# #### Insights:
+# - La deserción ocurre principalmente en los primeros meses del cliente.
+# Los clientes que abandonan tienen una antigüedad media 44% menor y una mediana 65% menor que la base general, lo que evidencia una fuerte relación entre antigüedad y probabilidad de abandono.
+
+# %%
+corr, p_value = pointbiserialr(
+    df['Desercion'],           # binaria (0/1)
+    df['Antiguedad_Meses']     # numérica
+)
+
+corr, p_value
+
+# %% [markdown]
+# ### Interpretación:
+# - Relación inversa entre las variables (−):
+#   - A mayor antigüedad del cliente, menor probabilidad de deserción.
+# - Magnitud (|r| = 0.35): Correlación negativa moderada.
+# - p-value ≈ 0 (9.43 × 10⁻²⁰⁷): La relación es estadísticamente significativa y no atribuible al azar.
+# - **p indica si existe relación (no es azar); r indica qué tan fuerte es y en qué sentido.**
+# 
+# **Conclusión:**
+# La antigüedad del cliente presenta una relación negativa moderada con la deserción, altamente significativa desde el punto de vista estadístico.
+
+# %% [markdown]
+# ## ¿En qué tiempo de antiguedad la deserción es mayor?
+
+# %%
+labels = [
+    '0–6 meses',
+    '7–12 meses',
+    '13–24 meses',
+    '25–36 meses',
+    '37–48 meses',
+    '49–72 meses'
+]
+
+df['Antiguedad_bin'] = pd.cut(
+    df['Antiguedad_Meses'],
+    bins=[0, 6, 12, 24, 36, 48, 72],
+    labels=labels,
+    right=True,
+    include_lowest=True
+)
+
+churn_rate = (
+    df.groupby('Antiguedad_bin', observed=True)['Desercion']
+      .mean()
+      .reset_index()
+)
+
+churn_rate
+
+
+# %%
+# Colores para cada punto
+colorMarcador = [
+    'red' if tasa == churn_rate['Desercion'].max() else 'gray'
+    for tasa in churn_rate['Desercion']
+]
+
+fig, ax = plt.subplots(figsize=(7,2))
+ax.set_frame_on(False) # Quita el marco del gráfico
+ax.yaxis.set_visible(False)  # Quita las etiquetas del eje Y
+ax.tick_params(axis='y', which='both', size=0) # Quita las marcas (ticks) del eje
+
+# Línea
+ax.plot(
+    churn_rate['Antiguedad_bin'].astype(str),
+    churn_rate['Desercion'],
+    color='gray',
+    linewidth=2,
+    zorder=1
+)
+
+# Puntos
+ax.scatter(
+    churn_rate['Antiguedad_bin'].astype(str),
+    churn_rate['Desercion'],
+    color=colorMarcador,
+    s=30,
+    zorder=2
+)
+
+# Punto máximo
+#max_row = churn_rate.loc[churn_rate['Desercion'].idxmax()]
+#ax.annotate(
+    #f'Máx: {max_row["Desercion"]:.1%}',
+    #xy=(str(max_row['Antiguedad_bin']), max_row['Desercion']),
+    #xytext=(0,10),
+    #textcoords='offset points',
+    #ha='center',
+    #fontsize=9,
+    #color='red'
+#)
+
+for _, row in churn_rate.iterrows():
+    es_max = row['Desercion'] == churn_rate['Desercion'].max()
+
+    ax.text(
+        str(row['Antiguedad_bin']),
+        row['Desercion'] + 0.015,
+        f"{row['Desercion']:.1%}",
+        ha='center',
+        va='bottom',
+        fontsize=9,
+        color='red' if es_max else 'gray',
+        fontweight='bold' if es_max else 'normal',
+        zorder=3
+    )
+
+
+ax.set_title(
+    'Tasa de deserción por antigüedad del cliente',
+    pad=35,
+    fontsize=12,
+    weight='bold',
+    loc='left'
+)
+
+ax.text(
+    0.0, 1.15,
+    'Los clientes con una antigüedad menor a 6 meses presentan la mayor tasa de deserción',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+ax.set_ylabel('Tasa de deserción')
+ax.set_xlabel('Antigüedad')
+ax.grid(axis='y', linestyle='--', alpha=0.2)
+
+# Guardar Gráfico como PNG
+fig.savefig(carpeta_graficos+'/Antiguedad_Deserción.png', transparent=False, dpi=300, bbox_inches='tight')
+
+plt.show()
+
+# %% [markdown]
+# ### ¿Los clientes mayores tienen una propensión mucho mayor al abandono?
+
+# %%
+tabla_propension = (
+    df.groupby('Adulto_Mayor')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+tabla_propension.index = tabla_propension.index.map({
+    0: 'No Adulto Mayor',
+    1: 'Adulto Mayor'
+})
+
+tabla_propension.columns = ['No Desertó', 'Desertó']
+
+tabla_propension
+
+# %%
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Valores
+no_deserto = tabla_propension['No Desertó']
+deserto = tabla_propension['Desertó']
+
+# Barras apiladas
+ax.bar(
+    tabla_propension.index,
+    no_deserto,
+    color='lightgray',
+    label='No desertó'
+)
+
+ax.bar(
+    tabla_propension.index,
+    deserto,
+    bottom=no_deserto,
+    color='red',
+    label='Desertó'
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_ylim(0, 1)
+#ax.set_yticks([0, 0.5, 1])
+#ax.set_yticklabels(['0%', '50%', '100%'])
+ax.yaxis.set_visible(False)                    # Oculta el eje y completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje x
+
+ax.set_title(
+    'Propensión a la deserción según perfil etario',
+    loc='left',
+    weight='bold',
+    pad=20
+)
+
+ax.text(
+    0.0, 1.05,
+    'Adultos mayores presentan una tasa de deserción aprox. 78% superior a la de los no adultos mayores',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+for i, perfil in enumerate(tabla_propension.index):
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'Desertó'
+        no_deserto.iloc[i] + deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'Desertó'
+        f'{deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='white',
+        weight='bold' # Ya estaba en negrita
+    )
+
+    # 2. Etiquetas de "No Desertó"
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'No Desertó'
+        no_deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'No Desertó'
+        f'{no_deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='black', # Color negro para contraste
+    )
+
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+ax.legend(title='Estado', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+
+plt.show()
+
+
+# %% [markdown]
+# ### ¿El género es un factor de riesgo?.
+
+# %%
+genero_propension = (
+    df.groupby('Genero')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+genero_propension.columns = ['No Desertó', 'Desertó']
+
+(
+    genero_propension
+    .style
+    .format('{:.2%}')
+    .set_caption('Propensión a la deserción por género')
+
+    # Heatmap suave SOLO en Desertó
+    .background_gradient(
+        subset=['Desertó'],
+        cmap='Reds',
+        low=0.2,
+        high=0.6
+    )
+
+    # Estilo general de celdas
+    .set_properties(**{
+        'text-align': 'center',
+        'font-size': '11px'
+    })
+
+    # Estilos CSS
+    .set_table_styles([
+        {
+            'selector': 'caption',
+            'props': [
+                ('font-size', '13px'),
+                ('font-weight', 'bold'),
+                ('text-align', 'left'),
+                ('margin-bottom', '10px')
+            ]
+        },
+        {
+            'selector': 'th',
+            'props': [
+                ('background-color', '#f7f7f7'),
+                ('font-weight', 'bold'),
+                ('text-align', 'center'),
+                ('font-size', '11px')
+            ]
+        },
+        {
+            'selector': 'td',
+            'props': [
+                ('border', '1px solid #eeeeee')
+            ]
+        }
+    ])
+)
+
+
+# %% [markdown]
+# #### Insight Genero:
+# - La propensión a la deserción es prácticamente equivalente entre hombres y mujeres, por lo que el género no es un factor diferenciador relevante.
+
+# %% [markdown]
+# ### ¿Los clientes con Pareja abandonan menos?
+
+# %%
+pareja_propension = (
+    df.groupby('Pareja')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+pareja_propension.index = pareja_propension.index.map({
+    0: 'Sin Pareja',
+    1: 'Con Pareja'
+})
+
+pareja_propension.columns = ['No Desertó', 'Desertó']
+
+pareja_propension
+
+# %%
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Valores
+no_deserto = pareja_propension['No Desertó']
+deserto = pareja_propension['Desertó']
+
+# Barras apiladas
+ax.bar(
+    pareja_propension.index,
+    no_deserto,
+    color='lightgray',
+    label='No desertó'
+)
+
+ax.bar(
+    pareja_propension.index,
+    deserto,
+    bottom=no_deserto,
+    color='red',
+    label='Desertó'
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_ylim(0, 1)
+#ax.set_yticks([0, 0.5, 1])
+#ax.set_yticklabels(['0%', '50%', '100%'])
+ax.yaxis.set_visible(False)                    # Oculta el eje y completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje Y
+
+ax.set_title(
+    'Propensión a la deserción según perfil de pareja',
+    loc='left',
+    weight='bold',
+    pad=30
+)
+
+ax.text(
+    0.0, 1.05,
+    'Los clientes sin pareja presentan una tasa de deserción de 33%,\nlo que representa un incremento relativo del 67% respecto a los clientes con pareja.',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+for i, perfil in enumerate(pareja_propension.index):
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'Desertó'
+        no_deserto.iloc[i] + deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'Desertó'
+        f'{deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='white',
+        weight='bold' # Ya estaba en negrita
+    )
+
+    # 2. Etiquetas de "No Desertó"
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'No Desertó'
+        no_deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'No Desertó'
+        f'{no_deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='black', # Color negro para contraste
+    )
+
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+ax.legend(title='Estado', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+
+plt.show()
+
+
+# %% [markdown]
+# ### ¿Cuales son las tasas de deserción por tipo de contrato?
+
+# %%
+tipoContrato_propension = (
+    df.groupby('Tipo_Contrato')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+#pareja_propension.index = pareja_propension.index.map({
+    #0: 'Sin Pareja',
+    #1: 'Con Pareja'
+#})
+
+tipoContrato_propension.columns = ['No Desertó', 'Desertó']
+
+tipoContrato_propension
+
+# %%
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Valores
+no_deserto = tipoContrato_propension['No Desertó']
+deserto = tipoContrato_propension['Desertó']
+
+# Barras apiladas
+ax.bar(
+    tipoContrato_propension.index,
+    no_deserto,
+    color='lightgray',
+    label='No desertó'
+)
+
+ax.bar(
+    tipoContrato_propension.index,
+    deserto,
+    bottom=no_deserto,
+    color='red',
+    label='Desertó'
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_ylim(0, 1)
+#ax.set_yticks([0, 0.5, 1])
+#ax.set_yticklabels(['0%', '50%', '100%'])
+ax.yaxis.set_visible(False)                    # Oculta el eje y completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje Y
+
+ax.set_title(
+    'Tasa de deserción por tipo de contrato',
+    loc='left',
+    weight='bold',
+    pad=20
+)
+
+ax.text(
+    0.0, 1.06,
+    'Los contratos de corto plazo presentan mayor propensión al abandono',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+for i, perfil in enumerate(tipoContrato_propension.index):
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'Desertó'
+        no_deserto.iloc[i] + deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'Desertó'
+        f'{deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=8,
+        color='black',
+        #weight='bold'
+    )
+
+    # 2. Etiquetas de "No Desertó"
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'No Desertó'
+        no_deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'No Desertó'
+        f'{no_deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='black', # Color negro para contraste
+    )
+
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+ax.legend(title='Estado', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+
+# Guardar Gráfico como PNG
+fig.savefig(carpeta_graficos+'/TipoContrato_Deserción.png', transparent=False, dpi=300, bbox_inches='tight')
+
+plt.show()
+
+# %% [markdown]
+# ### ¿Cual es la propensión a la deserción por método de pago?
+
+# %%
+metodoPago_propension = (
+    df.groupby('Metodo_Pago')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+#pareja_propension.index = pareja_propension.index.map({
+    #0: 'Sin Pareja',
+    #1: 'Con Pareja'
+#})
+
+metodoPago_propension.columns = ['No Desertó', 'Desertó']
+
+metodoPago_propension
+
+# %%
+from matplotlib.colors import Normalize
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Datos: SOLO desertores
+deserto = metodoPago_propension['Desertó'].sort_values(ascending=True)
+
+# Colores (resaltamos el máximo)
+colors = [
+    'red' if v == deserto.max() else 'lightgray'
+    for v in deserto
+]
+
+# Barras horizontales
+ax.barh(
+    deserto.index,
+    deserto.values,
+    color=colors
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_xlim(0, deserto.max() + 0.08)
+
+ax.xaxis.set_visible(False)
+ax.tick_params(axis='x', which='both', size=0)
+ax.tick_params(axis='y', which='both', size=0)
+
+# Título
+ax.set_title(
+    'Tasa de deserción según el método de pago',
+    loc='left',
+    weight='bold',
+    pad=20
+)
+
+# Subtítulo
+ax.text(
+    0.0, 1.05,
+    'El pago mediante Cheque Electrónico presenta la mayor propensión al abandono',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+# Etiquetas de porcentaje
+for i, v in enumerate(deserto.values):
+    ax.text(
+        v + 0.01,
+        i,
+        f'{v*100:.1f}%',
+        va='center',
+        fontsize=9,
+        color='red' if v == deserto.max() else 'black',
+        weight='bold' if v == deserto.max() else 'normal'
+    )
+
+# Guardar Gráfico como PNG
+fig.savefig(carpeta_graficos+'/MétodoPago_Deserción.png', transparent=False, dpi=300, bbox_inches='tight')
+
+plt.show()
+
+
+# %% [markdown]
+# ### ¿Que tipo de servicio de internet abandonan más?
+
+# %%
+servicioInternet_propension = (
+    df.groupby('Servicio_Internet')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+#pareja_propension.index = pareja_propension.index.map({
+    #0: 'Sin Pareja',
+    #1: 'Con Pareja'
+#})
+
+servicioInternet_propension.columns = ['No Desertó', 'Desertó']
+servicioInternet_propension
+
+# %%
+from matplotlib.colors import Normalize
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Datos: SOLO desertores
+deserto = servicioInternet_propension['Desertó'].sort_values(ascending=True)
+
+# Colores (resaltamos el máximo)
+colors = [
+    'red' if v == deserto.max() else 'lightgray'
+    for v in deserto
+]
+
+# Barras horizontales
+ax.barh(
+    deserto.index,
+    deserto.values,
+    color=colors
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_xlim(0, deserto.max() + 0.08)
+
+ax.xaxis.set_visible(False)
+ax.tick_params(axis='x', which='both', size=0)
+ax.tick_params(axis='y', which='both', size=0)
+
+# Título
+ax.set_title(
+    'Tasa de deserción según tipo de servicio de internet',
+    loc='left',
+    weight='bold',
+    pad=20
+)
+
+# Subtítulo
+ax.text(
+    0.0, 1.05,
+    'Los clientes con servicio de fibra presentan la mayor propensión al abandono',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+# Etiquetas de porcentaje
+for i, v in enumerate(deserto.values):
+    ax.text(
+        v + 0.01,
+        i,
+        f'{v*100:.1f}%',
+        va='center',
+        fontsize=9,
+        color='red' if v == deserto.max() else 'black',
+        weight='bold' if v == deserto.max() else 'normal'
+    )
+
+# Guardar Gráfico como PNG
+fig.savefig(carpeta_graficos+'/ServicioInternet_Deserción.png', transparent=False, dpi=300, bbox_inches='tight')
+
+plt.show()
+
+# %% [markdown]
+# #### Insight deserción por tipo de servicio de internet
+# - Los clientes que contratan servicio de fibra óptica presentan la mayor propensión a la deserción, con una tasa de abandono del 41.9%, más del doble que los clientes con DSL y casi seis veces superior a aquellos sin servicio de internet.
+
+# %% [markdown]
+# ### ¿Los clientes con facturación electrónica presentan mayor o menor tasa de deserción que aquellos con facturación tradicional?
+
+# %%
+Facturacion_Sin_Papel = (
+    df.groupby('Facturacion_Sin_Papel')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+Facturacion_Sin_Papel.index = Facturacion_Sin_Papel.index.map({
+    0: 'Física',
+    1: 'Electrónica'
+})
+
+Facturacion_Sin_Papel.columns = ['No Desertó', 'Desertó']
+
+Facturacion_Sin_Papel
+
+# %%
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Valores
+no_deserto = Facturacion_Sin_Papel['No Desertó']
+deserto = Facturacion_Sin_Papel['Desertó']
+
+# Barras apiladas
+ax.bar(
+    Facturacion_Sin_Papel.index,
+    no_deserto,
+    color='lightgray',
+    label='No desertó'
+)
+
+ax.bar(
+    Facturacion_Sin_Papel.index,
+    deserto,
+    bottom=no_deserto,
+    color='red',
+    label='Desertó'
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_ylim(0, 1)
+#ax.set_yticks([0, 0.5, 1])
+#ax.set_yticklabels(['0%', '50%', '100%'])
+ax.yaxis.set_visible(False)                    # Oculta el eje y completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje Y
+
+ax.set_title(
+    'Proporción de tasas según el tipo de facturación',
+    loc='left',
+    weight='bold',
+    pad=20
+)
+
+ax.text(
+    0.0, 1.06,
+    'La tasa de deserción de la facturación electrónica es 105% mayor que la de la facturación física',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+for i, perfil in enumerate(Facturacion_Sin_Papel.index):
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'Desertó'
+        no_deserto.iloc[i] + deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'Desertó'
+        f'{deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=8,
+        color='black',
+        #weight='bold'
+    )
+
+    # 2. Etiquetas de "No Desertó"
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'No Desertó'
+        no_deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'No Desertó'
+        f'{no_deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='black', # Color negro para contraste
+    )
+
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+ax.legend(title='Estado', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+
+plt.show()
+
+# %% [markdown]
+# ### ¿La falta de servicios adicionales aumenta la deserción?
+
+# %%
+soporte_tecnico = (
+    df[df['Soporte_Tecnico'] != 'No internet service']
+    .groupby('Soporte_Tecnico')['Desercion']
+    .value_counts(normalize=True)
+    .unstack()
+)
+
+soporte_tecnico.index = soporte_tecnico.index.map({
+    'No': 'No',
+    'Yes': 'Si'
+})
+
+
+soporte_tecnico.columns = ['No Desertó', 'Desertó']
+soporte_tecnico
+
+# %%
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Valores
+no_deserto = soporte_tecnico['No Desertó']
+deserto = soporte_tecnico['Desertó']
+
+# Barras apiladas
+ax.bar(
+    soporte_tecnico.index,
+    no_deserto,
+    color='lightgray',
+    label='No desertó'
+)
+
+ax.bar(
+    soporte_tecnico.index,
+    deserto,
+    bottom=no_deserto,
+    color='red',
+    label='Desertó'
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_ylim(0, 1)
+#ax.set_yticks([0, 0.5, 1])
+#ax.set_yticklabels(['0%', '50%', '100%'])
+ax.yaxis.set_visible(False)                    # Oculta el eje y completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje Y
+
+ax.set_title(
+    'Propensión a la deserción según soporte técnico',
+    loc='left',
+    weight='bold',
+    pad=22
+)
+
+ax.text(
+    0.0, 1.06,
+    'La deserción entre clientes sin soporte técnico es 2.7 veces mayor que entre quienes sí reciben soporte.',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+for i, perfil in enumerate(soporte_tecnico.index):
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'Desertó'
+        no_deserto.iloc[i] + deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'Desertó'
+        f'{deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=8,
+        color='black',
+        #weight='bold'
+    )
+
+    # 2. Etiquetas de "No Desertó"
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'No Desertó'
+        no_deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'No Desertó'
+        f'{no_deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='black', # Color negro para contraste
+    )
+
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+ax.legend(title='Estado', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+
+plt.show()
+
+# %%
+Seguridad_Online = (
+    df[df['Seguridad_Online'] != 'No internet service']
+      .groupby('Seguridad_Online')['Desercion']
+      .value_counts(normalize=True)
+      .unstack()
+)
+
+Seguridad_Online.index = Seguridad_Online.index.map({
+    'No': 'No',
+    'Yes': 'Si'
+})
+
+Seguridad_Online.columns = ['No Desertó', 'Desertó']
+
+Seguridad_Online
+
+# %% [markdown]
+# ### ¿Tener múltiples líneas aumenta la dependencia o la satisfacción?
+
+# %%
+Lineas_Multiples = (
+    df[df['Lineas_Multiples'] != 'No phone service']
+    .groupby('Lineas_Multiples')['Desercion']
+    .value_counts(normalize=True)
+    .unstack()
+)
+
+Lineas_Multiples.index = Lineas_Multiples.index.map({
+    'No': 'No',
+    'Yes': 'Si'
+})
+
+
+Lineas_Multiples.columns = ['No Desertó', 'Desertó']
+Lineas_Multiples
+
+# %%
+fig, ax = plt.subplots(figsize=(5,3))
+
+# Valores
+no_deserto = Lineas_Multiples['No Desertó']
+deserto = Lineas_Multiples['Desertó']
+
+# Barras apiladas
+ax.bar(
+    Lineas_Multiples.index,
+    no_deserto,
+    color='lightgray',
+    label='No desertó'
+)
+
+ax.bar(
+    Lineas_Multiples.index,
+    deserto,
+    bottom=no_deserto,
+    color='red',
+    label='Desertó'
+)
+
+# Estilo ejecutivo
+ax.set_frame_on(False)
+ax.set_ylim(0, 1)
+#ax.set_yticks([0, 0.5, 1])
+#ax.set_yticklabels(['0%', '50%', '100%'])
+ax.yaxis.set_visible(False)                    # Oculta el eje y completo
+ax.tick_params(axis='y', which='both', size=0) # Quitamos los ticks del eje Y
+ax.tick_params(axis='x', which='both', size=0) # Quitamos los ticks del eje Y
+
+ax.set_title(
+    'Propensión a la deserción según cantidad de líneas',
+    loc='left',
+    weight='bold',
+    pad=32
+)
+
+ax.text(
+    0.0, 1.06,
+    'Los clientes con múltiples líneas presentan una tasa de deserción ligeramente superior (+3.6 pp)\nfrente a aquellos con una sola línea.',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+for i, perfil in enumerate(Lineas_Multiples.index):
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'Desertó'
+        no_deserto.iloc[i] + deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'Desertó'
+        f'{deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=8,
+        color='black',
+        #weight='bold'
+    )
+
+    # 2. Etiquetas de "No Desertó"
+    ax.text(
+        i,
+        # Posición Y: Mitad de la barra 'No Desertó'
+        no_deserto.iloc[i] / 2,
+        # Texto: Porcentaje de 'No Desertó'
+        f'{no_deserto.iloc[i]*100:.2f}%',
+        ha='center',
+        va='center',
+        fontsize=9,
+        color='black', # Color negro para contraste
+    )
+
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+ax.legend(title='Estado', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+
+plt.show()
+
+# %% [markdown]
+# ## Análisis Financiero y de Antigüedad
+
+# %% [markdown]
+# ### Determinar si los clientes que abandonan son los que más o menos gastan mensualmente.
+
+# %%
+df['Desercion_label'] = df['Desercion'].map({
+    0: 'No desertó',
+    1: 'Desertó'
+})
+
+plt.figure(figsize=(4,3))
+
+
+sns.boxplot(
+    data=df,
+    x='Desercion_label',
+    y='Cargo_Mensual',
+    hue='Desercion_label',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    showfliers=False,
+    legend=False
+)
+
+plt.title(
+    'Gasto mensual según estado de deserción',
+    loc='left',
+    weight='bold',
+    pad=15
+)
+
+plt.text(
+    0, df['Cargo_Mensual'].max() * 1.02,
+    'Mediana: 63',
+    ha='center',
+    fontsize=9,
+    color='gray'
+)
+
+plt.text(
+    1, df['Cargo_Mensual'].max() * 1.02,
+    'Mediana: 80',
+    ha='center',
+    fontsize=9,
+    color='red'
+)
+
+plt.ylabel('Cargo mensual', color='gray')
+plt.tick_params(axis='y', color='lightgray')
+plt.yticks(color='gray')
+plt.xlabel('')
+plt.tick_params(axis='x', color='lightgray', size=0)
+plt.grid(axis='y', linestyle='--', alpha=0.3)
+
+sns.despine(left=True, bottom=True)
+plt.show()
+
+# %%
+plt.figure(figsize=(6,4))
+
+sns.scatterplot(
+    data=df,
+    x='Antiguedad_Meses',
+    y='Cargo_Mensual',
+    hue='Desercion_label',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    alpha=0.6
+)
+
+plt.title(
+    'Relación entre antigüedad, gasto mensual y deserción',
+    loc='left',
+    weight='bold',
+    pad=15
+)
+
+plt.xlabel('Antigüedad del cliente (meses)')
+plt.ylabel('Cargo mensual')
+
+plt.grid(True, linestyle='--', alpha=0.3)
+sns.despine()
+plt.legend(title='Deserción', frameon=False, bbox_to_anchor=(0.95, 1), loc='upper left', borderaxespad=1.)
+plt.show()
+
+
+# %% [markdown]
+# #### Insight Cargo mensual vs Deserción:
+# - El churn afecta de forma desproporcionada a clientes de alto valor. Los desertores pagan, en promedio, cargos mensuales significativamente más altos, lo que representa un riesgo directo para los ingresos.
+
+# %% [markdown]
+# ### ¿Los clientes que han gastado más en total tienen menor propensión a abandonar el servicio?
+
+# %%
+df[['Desercion','Cargo_Total']].corr()
+
+# %% [markdown]
+# #### Insight Correlación Cargo Total vs Deserción
+# - El menor gasto total de los clientes que desertan es una consecuencia de su corta permanencia y no un factor causal del abandono.
+
+# %%
+vars_numericas = df[[
+    'Desercion',
+    'Cargo_Mensual',
+    'Cargo_Total',
+    'Antiguedad_Meses'
+]]
+
+plt.figure(figsize=(5,3))
+sns.heatmap(
+    vars_numericas.corr(),
+    annot=True,
+    cmap='coolwarm',
+    fmt='.2f'
+)
+
+plt.title('Matriz de correlación de variables numéricas')
+plt.show()
+
+
+# %% [markdown]
+# #### Insight Correlación de variables númericas
+# - La deserción presenta una relación negativa moderada con la antigüedad, lo que indica que el churn ocurre principalmente en los primeros meses.
+# Si bien el gasto total también se asocia negativamente con la deserción, esta relación está explicada en gran parte por la duración del cliente.
+# - En contraste, el cargo mensual muestra una relación positiva con el churn, sugiriendo que los clientes con planes más costosos presentan mayor riesgo de abandono.
+
+# %% [markdown]
+# ### ¿Cómo varía la antigüedad promedio de los clientes según el tipo de contrato y su estado de deserción?
+
+# %%
+tenure_contrato_churn = (
+    df
+    .groupby(['Tipo_Contrato', 'Desercion'])['Antiguedad_Meses']
+    .mean()
+    .reset_index()
+)
+
+tenure_contrato_churn['Desercion_label'] = tenure_contrato_churn['Desercion'].map({
+    0: 'No desertó',
+    1: 'Desertó'
+})
+
+tenure_contrato_churn
+
+
+# %%
+plt.figure(figsize=(5,3))
+
+sns.barplot(
+    data=tenure_contrato_churn,
+    x='Tipo_Contrato',
+    y='Antiguedad_Meses',
+    hue='Desercion_label',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'}
+)
+
+plt.title(
+    'Antigüedad promedio por tipo de contrato y estado de deserción',
+    loc='left',
+    weight='bold',
+    pad=15
+)
+
+plt.ylabel('Antigüedad promedio (meses)', color='gray')
+plt.xlabel('')
+
+plt.legend(
+    title='Deserción',
+    frameon=False,
+    bbox_to_anchor=(1,1),
+    loc='upper left'
+)
+
+plt.tick_params(axis='x', size=0)
+plt.tick_params(axis='y', color='lightgray')
+plt.yticks(color='gray')
+
+plt.grid(axis='y', linestyle='--', alpha=0.3)
+
+# ---- Spines ----
+ax = plt.gca()
+sns.despine(left=True, bottom=False)
+ax.spines['bottom'].set_color('gray')
+ax.spines['bottom'].set_linewidth(0.5)
+
+plt.show()
+
+
+# %% [markdown]
+# #### Insight Antiguedad promedios vs tipo de contrato
+# - Incluso en contratos de largo plazo, la deserción persiste y ocurre tras períodos significativos de permanencia, lo que sugiere que el contrato mitiga el abandono temprano, pero no garantiza la retención a largo plazo.
+
+# %%
+fig, ax = plt.subplots(figsize=(6,3.5))
+
+sns.barplot(
+    data=tenure_contrato_churn,
+    x='Tipo_Contrato',
+    y='Antiguedad_Meses',
+    hue='Desercion_label',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    ax=ax
+)
+
+# --- Estilo base ---
+ax.set_frame_on(False)
+ax.tick_params(axis='x', size=0)
+ax.tick_params(axis='y', color='lightgray')
+ax.yaxis.label.set_color('gray')
+
+ax.set_ylabel('Antigüedad promedio (meses)')
+ax.set_xlabel('')
+
+ax.set_title(
+    'Antigüedad promedio por contrato y estado de deserción',
+    loc='left',
+    weight='bold',
+    pad=25
+)
+
+ax.text(
+    0.0, 1.07,
+    'Incluso bajo contratos de largo plazo, la deserción ocurre tras períodos prolongados de permanencia',
+    transform=ax.transAxes,
+    ha='left',
+    fontsize=9,
+    color='gray'
+)
+
+# --- Líneas de referencia por contrato ---
+for contrato in tenure_contrato_churn['Tipo_Contrato'].unique():
+    media_contrato = (
+        tenure_contrato_churn
+        .loc[tenure_contrato_churn['Tipo_Contrato'] == contrato, 'Antiguedad_Meses']
+        .mean()
+    )
+
+    xpos = list(tenure_contrato_churn['Tipo_Contrato'].unique()).index(contrato)
+
+    ax.hlines(
+        y=media_contrato,
+        xmin=xpos - 0.35,
+        xmax=xpos + 0.35,
+        colors='gray',
+        linestyles='dashed',
+        linewidth=1,
+        alpha=0.6
+    )
+
+# --- Anotación de brecha (solo donde aporta valor) ---
+for contrato in ['1 Año', '2 Años']:
+    subset = tenure_contrato_churn[
+        tenure_contrato_churn['Tipo_Contrato'] == contrato
+    ]
+
+    no_deserto = subset.loc[subset['Desercion_label'] == 'No desertó', 'Antiguedad_Meses'].values[0]
+    deserto = subset.loc[subset['Desercion_label'] == 'Desertó', 'Antiguedad_Meses'].values[0]
+
+    diff = deserto - no_deserto
+    xpos = list(tenure_contrato_churn['Tipo_Contrato'].unique()).index(contrato)
+
+    ax.text(
+        xpos,
+        max(no_deserto, deserto) + 2,
+        f'+{diff:.1f} meses',
+        ha='center',
+        fontsize=9,
+        color='red',
+        weight='bold'
+    )
+
+# --- Leyenda ---
+ax.legend(
+    title='Deserción',
+    frameon=False,
+    bbox_to_anchor=(1,1),
+    loc='upper left'
+)
+
+ax.grid(axis='y', linestyle='--', alpha=0.3)
+sns.despine(left=True, bottom=True)
+
+# ---- Spines ----
+ax = plt.gca()
+ax.spines['bottom'].set_color('gray')
+ax.spines['bottom'].set_linewidth(0.5)
+
+plt.show()
+
+
+# %% [markdown]
+# #### Insight antiguedad promedio vs contrato 2
+# - La mayor antigüedad de los clientes que desertan bajo contratos de 1 y 2 años sugiere que el riesgo de abandono aumenta cerca del vencimiento del compromiso contractual, lo que abre una ventana clara para acciones de retención anticipadas.
+
+# %% [markdown]
+# ## ¿Cuándo ocurre la mayoría de las deserciones?
+
+# %%
+plt.figure(figsize=(6,3))
+
+sns.histplot(
+    data=df,
+    x='Antiguedad_Meses',
+    hue='Desercion_label',
+    bins=30,
+    stat='density',
+    common_norm=False,
+    element='step',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    alpha=0.6
+)
+
+# Línea de referencia (punto crítico)
+plt.axvline(
+    x=6,
+    linestyle='--',
+    color='red',
+    linewidth=1
+)
+
+plt.text(
+    7, plt.ylim()[1]*0.9,
+    '≈ 6 meses\npunto crítico',
+    color='red',
+    fontsize=9,
+    ha='left'
+)
+
+plt.title(
+    'Distribución de antigüedad por estado de deserción',
+    loc='left',
+    weight='bold',
+    pad=15
+)
+
+plt.xlabel('Antigüedad del cliente (meses)')
+plt.ylabel('Densidad')
+
+plt.grid(axis='y', linestyle='--', alpha=0.3)
+sns.despine()
+ax = plt.gca()
+sns.move_legend(
+    ax,
+    "upper left",
+    bbox_to_anchor=(1,1),
+    title="Deserción",
+    frameon=False
+)
+
+plt.show()
+
+# %% [markdown]
+# #### Insight densidad de deserción por antiguedad
+# - El histograma evidencia que la mayoría de las deserciones se concentran en los primeros 6 meses de antigüedad, identificando este periodo como el punto crítico de riesgo. A partir de este umbral, la frecuencia de abandono disminuye significativamente, lo que sugiere que los clientes que superan los 6 meses presentan una mayor probabilidad de permanencia.
+
+# %% [markdown]
+# ## ¿Los precios de cada tipo de Internet tienen una distribución lógica y sin anomalías?
+
+# %%
+plt.figure(figsize=(4,3))
+sns.boxplot(
+    data=df,
+    x='Servicio_Internet',
+    y='Cargo_Mensual',
+    hue='Servicio_Internet',
+    palette={'DSL': 'lightgray', 'Fiber optic': 'salmon', 'No':'darkgreen'},
+    showfliers=False,
+    legend=False
+)
+
+
+plt.title(
+    'Gasto mensual según servicio de internet contratado',
+    loc='left',
+    weight='bold',
+    pad=15
+)
+
+plt.ylabel('Cargo mensual', color='gray')
+plt.tick_params(axis='y', color='lightgray')
+plt.yticks(color='gray')
+plt.xlabel('')
+plt.tick_params(axis='x', color='lightgray', size=0)
+plt.grid(axis='y', linestyle='--', alpha=0.3)
+
+sns.despine(left=True, bottom=True)
+plt.show()
+
+# %% [markdown]
+# #### Insight Gastos mensuales según servicio de internet contratado
+# - El gráfico muestra una segmentación clara y consistente de los cargos mensuales según el tipo de servicio de internet. Fiber optic presenta los valores más elevados y mayor dispersión, seguido por DSL con cargos intermedios, mientras que los clientes sin servicio de internet exhiben cargos bajos y altamente concentrados. No se identifican anomalías ni valores atípicos relevantes, lo que sugiere una estructura de precios coherente y estable entre los distintos servicios.
+
+# %% [markdown]
+# ## ¿La deserción en fibra ocurre temprano o incluso después de largos períodos de permanencia?
+
+# %%
+df_fiber = df[df['Servicio_Internet'] == 'Fiber optic']
+
+plt.figure(figsize=(6,3))
+
+sns.histplot(
+    data=df_fiber,
+    x='Antiguedad_Meses',
+    hue='Desercion_label',
+    bins=30,
+    stat='density',
+    common_norm=False,
+    element='step',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    alpha=0.6
+)
+
+plt.axvline(6, linestyle='--', color='red', linewidth=1)
+plt.text(7, plt.ylim()[1]*0.9, '≈ 6 meses\npunto crítico', color='red', fontsize=9)
+
+plt.title(
+    'Antigüedad y deserción en clientes de fibra óptica',
+    loc='left', weight='bold', pad=15
+)
+
+plt.xlabel('Antigüedad (meses)')
+plt.ylabel('Densidad')
+
+plt.grid(axis='y', linestyle='--', alpha=0.3)
+sns.despine()
+plt.show()
+
+
+# %% [markdown]
+# ## Dentro de fibra óptica, ¿los que pagan más desertan más?
+
+# %%
+plt.figure(figsize=(4,3))
+
+sns.boxplot(
+    data=df_fiber,
+    x='Desercion_label',
+    y='Cargo_Mensual',
+    hue='Desercion_label',
+    palette={'No desertó': 'lightgray', 'Desertó': 'salmon'},
+    showfliers=False,
+    legend=False
+)
+
+plt.title(
+    'Gasto mensual y deserción en clientes de fibra óptica',
+    loc='left', weight='bold', pad=15
+)
+
+plt.ylabel('Cargo mensual')
+plt.xlabel('')
+
+plt.grid(axis='y', linestyle='--', alpha=0.3)
+sns.despine()
+plt.show()
+
+
+# %% [markdown]
+# #### Insight clave combinado (Antiguedad + Cargos mensuales + Deserción):
+# - Aunque la fibra óptica tiene los cargos mensuales más altos, los clientes que desertan no presentan un gasto superior al de quienes permanecen. La deserción se concentra principalmente en clientes de baja antigüedad, lo que sugiere que el abandono está más asociado a la experiencia temprana, expectativas del servicio o problemas de onboarding, y no al nivel de precio en sí mismo.
+
+# %% [markdown]
+# # **📄INFORME FINAL**
+
+# %% [markdown]
+# # Proyecto: Telecom X – Churn de Clientes
+# 
+# **Rol:** Asistente de Análisis de Datos  
+# **Dataset:** 7,032 clientes | 23 variables
+# 
+# ---
+# 
+# ## 1. Objetivo del análisis
+# 
+# Comprender los factores que impulsan la deserción de clientes en Telecom X a partir de un análisis exploratorio de datos (EDA), con el fin de generar insights accionables que permitan:
+# 
+# - Reducir la tasa de abandono
+# - Priorizar segmentos de alto riesgo
+# - Sentar las bases para modelos predictivos de churn
+# 
+# ---
+# 
+# ## 2. Resumen ejecutivo
+# 
+# - **Tasa de deserción global:** 26.6%, un nivel elevado con impacto directo en ingresos
+# - **Momento crítico del churn:** los primeros 6 meses concentran más del 53% de abandono
+# - **Perfil de mayor riesgo:** clientes con baja antigüedad, contrato mensual, facturación electrónica, fibra óptica, sin soporte técnico y adultos mayores
+# - **Riesgo financiero:** el churn afecta de forma desproporcionada a clientes de alto cargo mensual
+# - **Variables no relevantes:** el género no muestra diferencias significativas en la propensión al abandono
+# 
+# > **Conclusión clave:** la deserción no es aleatoria; responde a patrones claros de experiencia temprana, tipo de contrato y composición del servicio.
+# 
+# ---
+# 
+# ## 3. Perfil general de clientes
+# 
+# ### 3.1 Demografía
+# 
+# - **Género:** distribución equilibrada (≈50% hombres / 50% mujeres)
+# - **Adultos mayores:** representan solo el 16% de la base, pero con una tasa de churn 78% mayor que los no adultos mayores
+# - **Convivencia:** ligera mayoría de clientes sin pareja (52%)
+# 
+# ### 3.2 Antigüedad
+# 
+# - **Mediana:** 29 meses
+# - Distribución bimodal, con concentración en clientes muy nuevos y muy antiguos
+# - Amplia dispersión (Q1 = 10 meses, Q3 = 55 meses)
+# 
+# ### 3.3 Cargos mensuales
+# 
+# - Base amplia de clientes de bajo consumo
+# - Segmento relevante de clientes con cargos medios y altos
+# - Distribución asimétrica, con mayor concentración hacia valores altos
+# 
+# ---
+# 
+# ## 4. Análisis profundo de deserción
+# 
+# ### 4.1 Antigüedad y churn
+# 
+# - **Antigüedad media desertores:** 18 meses vs 32 meses del total
+# - **Mediana desertores:** 10 meses
+# - Correlación negativa moderada y significativa entre antigüedad y churn
+# 
+# **Tasa de deserción por tramo de antigüedad:**
+# 
+# | Período | Tasa de Churn |
+# |---------|---------------|
+# | 0–6 meses | 53% |
+# | 7–12 meses | 36% |
+# | 13–24 meses | 29% |
+# | ≥48 meses | < 10% |
+# 
+# > **Insight crítico:** superar los primeros 6 meses aumenta drásticamente la probabilidad de permanencia.
+# 
+# ### 4.2 Factores sociodemográficos
+# 
+# - **Género:** no es un factor diferenciador
+# - **Adultos mayores:** tasa de deserción del 41.7%
+# - **Pareja:**
+#   - Sin pareja: 33% churn
+#   - Con pareja: 19.7% churn
+# 
+# > ** Los clientes con vínculos familiares muestran mayor estabilidad.
+# 
+# ### 4.3 Tipo de contrato
+# 
+# | Tipo de contrato | Tasa de churn |
+# |------------------|---------------|
+# | Mensual | 42.7% |
+# | 1 año | 11.3% |
+# | 2 años | 2.8% |
+# 
+# Los contratos largos reducen fuertemente el abandono temprano. Sin embargo, incluso en contratos de 1 y 2 años, el churn aparece cerca del vencimiento, lo que abre una ventana clara de retención preventiva.
+# 
+# ### 4.4 Método de pago
+# 
+# - **Cheque electrónico:** mayor riesgo de churn (45.3%)
+# - **Métodos automáticos** (tarjeta / transferencia): menor abandono
+# 
+# > ** Posible indicador de fricción operativa o menor compromiso del cliente.
+# 
+# ### 4.5 Servicios contratados
+# 
+# #### Servicio de Internet
+# 
+# | Servicio | Tasa de churn |
+# |----------|---------------|
+# | Fibra óptica | 41.9% |
+# | DSL | 19.0% |
+# | Sin internet | 7.4% |
+# 
+# - Fibra óptica combina alto precio + alta deserción
+# - La deserción ocurre principalmente en los primeros 6 meses, no en clientes antiguos
+# 
+# > ** El problema no es el precio, sino la experiencia inicial (expectativas, instalación, soporte).
+# 
+# #### Servicios adicionales
+# 
+# **Clientes sin soporte técnico:**
+# - Churn 2.7 veces mayor que quienes sí lo tienen
+# 
+# > ** Los servicios de valor agregado funcionan como anclas de retención.
+# 
+# ---
+# 
+# ## 5. Análisis financiero del churn
+# 
+# **Cargo mensual:**
+# - Desertores: mediana ≈ 80
+# - No desertores: mediana ≈ 63
+# 
+# ** El churn impacta más en clientes de alto valor mensual.
+# 
+# **Cargo total:** correlación negativa con churn, explicada por menor antigüedad.
+# 
+# ### Conclusión financiera
+# 
+# El abandono temprano de clientes con planes caros representa el mayor riesgo para ingresos futuros.
+# 
+# ---
+# 
+# ## 6. Insights claves
+# 
+# 1. El churn es temprano, predecible y segmentable
+# 2. Los primeros 6 meses definen la relación con el cliente
+# 3. La fibra óptica es el producto más crítico desde el punto de vista de churn
+# 4. El contrato mensual y la facturación electrónica elevan significativamente el riesgo
+# 5. Los servicios adicionales, especialmente soporte técnico, reducen el abandono
+# 6. El churn afecta más a clientes de alto cargo mensual, amplificando el impacto financiero
+# 
+# ---
+# 
+# ## 7. Recomendaciones estratégicas
+# 
+# ### 7.1 Acciones de corto plazo (operativas)
+# 
+# - Programa de onboarding intensivo en los primeros 90 días
+# - Seguimiento proactivo a clientes de fibra óptica
+# - Incentivos para migrar de contrato mensual a 1 año
+# - Promover métodos de pago automáticos
+# 
+# ### 7.2 Acciones de retención
+# 
+# **Alertas de churn para clientes:**
+# - < 6 meses
+# - Cargo mensual alto
+# - Sin soporte técnico
+# 
+# **Ofertas de renovación** antes del vencimiento contractual.
+# 
+# ### 7.3 Data Science
+# 
+# **Variables clave para modelo predictivo:**
+# - Antigüedad
+# - Tipo de contrato
+# - Servicio de internet
+# - Cargo mensual
+# - Soporte técnico
+# - Adulto mayor
+# 
+# ---
+# 
+# ## 8. Conclusión final
+# 
+# La deserción en Telecom X responde a patrones claros de experiencia temprana, estructura contractual y composición del servicio. Actuar sobre los primeros meses del cliente, especialmente en productos de alto valor como la fibra óptica, representa la mayor oportunidad para reducir churn y proteger ingresos.
+# 
+
+
