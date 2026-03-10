@@ -334,7 +334,8 @@ SOFTWARE.
 ## ✨ Autor
 
 **Yuliet Rey**
-Bussiness and Commerce | Data Analyst | Python Developer | Business Intelligence | 
+
+**Bussiness and Commerce | Data Analyst | Python Developer | Business Intelligence |**
 
 ## 🙏 Agradecimientos
 
