@@ -333,7 +333,7 @@ SOFTWARE.
 
 ## ✨ Autor
 
-**Yuliet Rey**
+**🪄♠️Yuliet Rey🃏**
 
 **Bussiness and Commerce | Data Analyst | Python Developer | Business Intelligence |**
 
